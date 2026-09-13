@@ -1,0 +1,37 @@
+.profile-page {
+  max-width: 520px;
+  padding: 24px 28px 48px;
+}
+
+.profile-page .saved {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--success-soft);
+  color: var(--success);
+  font-weight: 600;
+}
+
+.profile-page .note {
+  display: block;
+  margin: 6px 0 0 4px;
+  font-size: 12px;
+}
+
+/* Notifikasi & keluar: di HP menu samping tidak menampilkannya. */
+.profile-extra {
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 860px) {
+  .profile-page {
+    padding: 16px 14px 32px;
+  }
+}

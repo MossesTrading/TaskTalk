@@ -1,0 +1,92 @@
+.secure-image {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface);
+  line-height: 0;
+}
+
+.secure-image.loading {
+  width: 200px;
+  height: 140px;
+  border-radius: var(--radius-md);
+}
+
+.secure-image img {
+  max-width: 100%;
+  max-height: inherit;
+  display: block;
+  object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.watermark {
+  position: absolute;
+  inset: 0;
+  background-repeat: repeat;
+  pointer-events: none;
+  mix-blend-mode: difference;
+}
+
+.secure-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+  background: rgba(0, 0, 0, 0.78);
+}
+
+.secure-viewer .frame {
+  position: relative;
+  line-height: 0;
+  max-width: min(900px, 90vw);
+  max-height: 84vh;
+}
+
+.secure-viewer .frame img {
+  max-width: min(900px, 90vw);
+  max-height: 84vh;
+  border-radius: var(--radius-md);
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.secure-viewer .close {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.secure-viewer .close:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+@media (max-width: 860px) {
+  .secure-viewer {
+    padding: 12px;
+  }
+
+  .secure-viewer .close {
+    top: 10px;
+    right: 12px;
+  }
+
+  .secure-viewer .frame img {
+    max-width: 94vw;
+    max-height: 78dvh;
+  }
+}
