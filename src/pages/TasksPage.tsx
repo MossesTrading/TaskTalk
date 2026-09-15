@@ -28,6 +28,9 @@ import {
   type HourBucket,
   type DateRange,
   type OperatorStat,
+  type RepairFix,
+  type RepairGroupStat,
+  type RepairOperatorStat,
   type TaskBoard,
 } from '../lib/tasks';
 import './TasksPage.css';
@@ -204,6 +207,9 @@ function TaskCard({ board, periodLabel, open, onToggle }: CardProps) {
           <Pill label="Unit" value={t.units} />
           <Pill label="OK" value={t.ok} tone="ok" />
           <Pill label="Repair" value={t.repair} tone="repair" />
+          {board.repairWork.opened ? (
+            <Pill label="Selesai" value={board.repairWork.done} tone="fixed" />
+          ) : null}
           <span className="quick-rate">
             <span className="rate-bar" aria-hidden="true">
               <i style={{ width: `${t.repairRate}%` }} />
@@ -237,7 +243,7 @@ function Pill({
 }: {
   label: string;
   value: number;
-  tone?: 'ok' | 'repair';
+  tone?: 'ok' | 'repair' | 'fixed';
 }) {
   return (
     <span className={`pill${tone ? ` ${tone}` : ''}`}>
@@ -285,7 +291,16 @@ function TaskPanel({
       <div className="tiles">
         <Tile label="Unit unik" value={t.units} hint={`${t.records} entri tersimpan`} />
         <Tile label="OK" value={t.ok} tone="ok" hint={`${(100 - t.repairRate).toFixed(1)}%`} />
-        <Tile label="Repair" value={t.repair} tone="repair" hint={`${t.repairRate.toFixed(1)}%`} />
+        <Tile
+          label="Repair"
+          value={t.repair}
+          tone="repair"
+          hint={
+            board.repairWork.opened
+              ? `${t.repairRate.toFixed(1)}% · ${board.repairWork.done} selesai`
+              : `${t.repairRate.toFixed(1)}%`
+          }
+        />
         <Tile
           label="Rata-rata / jam"
           value={board.perHour.toFixed(1)}
@@ -304,14 +319,16 @@ function TaskPanel({
         note={
           gabungJam
             ? `Semua ${board.dayCount} hari digabung menurut jam ${TZ_LABEL}, jadi terlihat jam berapa paling produktif.`
-            : `Tiap unit dihitung sekali, pada jam entri terakhirnya (${TZ_LABEL}).`
+            : `Tiap unit dihitung sekali, pada jam pemeriksaan pertamanya (${TZ_LABEL}).`
         }
       >
         <HourChart buckets={gabungJam ? board.byHourOfDay : board.byHour} />
       </Section>
 
+      <RepairSection board={board} periodLabel={periodLabel} />
+
       <div className="panel-split">
-        <Section title="Status" note="Satu unit satu status: entri terakhir yang dipakai.">
+        <Section title="Status" note="Satu unit satu status: entri pertama yang dipakai.">
           <StatusBreakdown board={board} />
         </Section>
 
@@ -365,7 +382,8 @@ function TaskPanel({
           Unduh Excel
         </button>
         <small className="muted">
-          9 sheet: ringkasan, per jam, status, model, area, blok, petugas, data, entri ditimpa.
+          Ringkasan, per jam, status, model, area, blok, petugas, data, pengerjaan repair, dan
+          entri susulan.
         </small>
       </div>
     </div>
@@ -406,7 +424,7 @@ function Tile({
   label: string;
   value: number | string;
   hint?: string;
-  tone?: 'ok' | 'repair';
+  tone?: 'ok' | 'repair' | 'fixed';
 }) {
   return (
     <div className={`tile${tone ? ` ${tone}` : ''}`}>
@@ -418,7 +436,14 @@ function Tile({
 }
 
 // Grafik batang sederhana — digambar dengan CSS, tanpa library chart.
-function HourChart({ buckets }: { buckets: HourBucket[] }) {
+// variant "fixed": satu warna saja, dipakai grafik penyelesaian repair.
+function HourChart({
+  buckets,
+  variant = 'status',
+}: {
+  buckets: HourBucket[];
+  variant?: 'status' | 'fixed';
+}) {
   if (buckets.length === 0) {
     return <p className="muted small-note">Belum ada entri dengan waktu yang terbaca.</p>;
   }
@@ -432,16 +457,29 @@ function HourChart({ buckets }: { buckets: HourBucket[] }) {
           <div
             key={bucket.key}
             className="hour-col"
-            title={`${bucket.dayLabel} ${bucket.label} — ${bucket.total} unit (OK ${bucket.ok}, Repair ${bucket.repair})`}
+            title={
+              variant === 'fixed'
+                ? `${bucket.dayLabel} ${bucket.label} — ${bucket.total} repair selesai`
+                : `${bucket.dayLabel} ${bucket.label} — ${bucket.total} unit (OK ${bucket.ok}, Repair ${bucket.repair})`
+            }
           >
             <span className="hour-total">{bucket.total}</span>
             <span className="hour-stack" style={{ height: `${(bucket.total / max) * 100}%` }}>
-              <i
-                className="seg-repair"
-                style={{ height: `${(bucket.repair / bucket.total) * 100}%` }}
-              />
-              <i className="seg-other" style={{ height: `${(bucket.other / bucket.total) * 100}%` }} />
-              <i className="seg-ok" style={{ height: `${(bucket.ok / bucket.total) * 100}%` }} />
+              {variant === 'fixed' ? (
+                <i className="seg-fixed" style={{ height: '100%' }} />
+              ) : (
+                <>
+                  <i
+                    className="seg-repair"
+                    style={{ height: `${(bucket.repair / bucket.total) * 100}%` }}
+                  />
+                  <i
+                    className="seg-other"
+                    style={{ height: `${(bucket.other / bucket.total) * 100}%` }}
+                  />
+                  <i className="seg-ok" style={{ height: `${(bucket.ok / bucket.total) * 100}%` }} />
+                </>
+              )}
             </span>
             <span className="hour-label">
               {bucket.label}
@@ -450,7 +488,15 @@ function HourChart({ buckets }: { buckets: HourBucket[] }) {
           </div>
         ))}
       </div>
-      <Legend />
+      {variant === 'fixed' ? (
+        <div className="legend">
+          <span>
+            <i className="dot fixed" /> Repair selesai
+          </span>
+        </div>
+      ) : (
+        <Legend />
+      )}
     </div>
   );
 }
@@ -468,6 +514,260 @@ function Legend() {
         <i className="dot other" /> Lainnya
       </span>
     </div>
+  );
+}
+
+// ── Achievement pengerjaan repair ────────────────────────────────────────── //
+//
+// Papan kedua, sengaja dipisah dari angka pemeriksaan di atas. Isinya unit yang
+// entri pertamanya repair lalu dicatat ulang jadi OK: itu hasil pengerjaan
+// repair, bukan unit baru, jadi tidak boleh menambah kolom OK pemeriksaan.
+
+function RepairSection({ board, periodLabel }: { board: TaskBoard; periodLabel: string }) {
+  const r = board.repairWork;
+  // Sama seperti grafik utama: lebih dari dua hari ditumpuk ke jam 00–23.
+  const gabungJam = r.dayCount > 2;
+  const multiDay = r.dayCount > 1;
+
+  return (
+    <section className="panel-section repair-block">
+      <header>
+        <div>
+          <h3>
+            <Wrench size={16} /> Achievement pengerjaan repair
+          </h3>
+          <small className="muted">
+            Unit yang tadinya repair lalu dicatat ulang jadi OK. Hitungannya berdiri sendiri —
+            tidak dijumlahkan ke OK pemeriksaan di atas.
+          </small>
+        </div>
+      </header>
+
+      {r.opened === 0 ? (
+        <p className="muted small-note">
+          Tidak ada unit berstatus repair pada {periodLabel}, jadi belum ada yang bisa dikerjakan.
+        </p>
+      ) : (
+        <>
+          <div className="tiles">
+            <Tile
+              label="Unit repair"
+              value={r.opened}
+              tone="repair"
+              hint="dari pemeriksaan pertama"
+            />
+            <Tile
+              label="Selesai (jadi OK)"
+              value={r.done}
+              tone="fixed"
+              hint={`${r.doneRate.toFixed(1)}% dari repair`}
+            />
+            <Tile
+              label="Belum selesai"
+              value={r.open}
+              hint={`${(100 - r.doneRate).toFixed(1)}% dari repair`}
+            />
+            <Tile
+              label="Lama perbaikan"
+              value={formatDuration(r.medianMs)}
+              hint={`median · rata-rata ${formatDuration(r.avgMs)}`}
+            />
+            <Tile
+              label="Jam tersibuk"
+              value={r.busiestHour ? r.busiestHour.label : '-'}
+              hint={r.busiestHour ? `${r.busiestHour.total} selesai` : '-'}
+            />
+            <Tile
+              label="Rata-rata / jam"
+              value={r.perHour.toFixed(1)}
+              hint={`${r.byHour.length} jam aktif`}
+            />
+          </div>
+
+          {r.done === 0 ? (
+            <p className="muted small-note">
+              Belum ada unit repair yang dicatat ulang jadi OK pada {periodLabel}.
+            </p>
+          ) : (
+            <>
+              <div className="sub-block">
+                <h4>
+                  Selesai per jam
+                  <small className="muted">
+                    {gabungJam
+                      ? `${r.dayCount} hari digabung menurut jam ${TZ_LABEL}.`
+                      : `Dihitung pada jam entri OK-nya (${TZ_LABEL}).`}
+                  </small>
+                </h4>
+                <HourChart buckets={gabungJam ? r.byHourOfDay : r.byHour} variant="fixed" />
+              </div>
+
+              <div className="panel-split">
+                <div className="sub-block">
+                  <h4>
+                    Per petugas
+                    <small className="muted">Petugas yang mencatat unitnya jadi OK.</small>
+                  </h4>
+                  <RepairOperatorTable rows={r.byOperator} />
+                </div>
+
+                <div className="sub-block">
+                  <h4>
+                    Per model
+                    <small className="muted">Berapa repair yang sudah tuntas di tiap model.</small>
+                  </h4>
+                  <RepairGroupTable rows={r.byModel} label="Model" max={8} />
+                </div>
+              </div>
+
+              <div className="sub-block">
+                <h4>
+                  Daftar unit selesai
+                  <small className="muted">Dari repair sampai dinyatakan OK.</small>
+                </h4>
+                <RepairFixTable fixes={r.fixes} multiDay={multiDay} />
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function RepairOperatorTable({ rows }: { rows: RepairOperatorStat[] }) {
+  if (rows.length === 0) {
+    return <p className="muted small-note">Belum ada data.</p>;
+  }
+  return (
+    <table className="stat-table">
+      <thead>
+        <tr>
+          <th>Petugas</th>
+          <th>Selesai</th>
+          <th>Jam kerja</th>
+          <th>Unit/jam</th>
+          <th>Rata-rata</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(row => (
+          <tr key={row.key}>
+            <td className="col-name">{row.key}</td>
+            <td>{row.done}</td>
+            <td className="nowrap">
+              <Clock size={13} /> {formatZoneTime(row.firstMs)}–{formatZoneTime(row.lastMs)}
+            </td>
+            <td>{row.perHour.toFixed(1)}</td>
+            <td className="nowrap">{formatDuration(row.avgMs)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function RepairGroupTable({
+  rows,
+  label,
+  max,
+}: {
+  rows: RepairGroupStat[];
+  label: string;
+  max?: number;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  if (rows.length === 0) {
+    return <p className="muted small-note">Belum ada data.</p>;
+  }
+  const limit = max ?? rows.length;
+  const visible = showAll ? rows : rows.slice(0, limit);
+  const top = rows[0].opened;
+
+  return (
+    <>
+      <table className="stat-table">
+        <thead>
+          <tr>
+            <th>{label}</th>
+            <th>Repair</th>
+            <th>Selesai</th>
+            <th className="col-rate">Selesai</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visible.map(row => (
+            <tr key={row.key}>
+              <td className="col-name">
+                <span className="mini-bar" aria-hidden="true">
+                  <i style={{ width: `${(row.opened / top) * 100}%` }} />
+                </span>
+                {row.key}
+              </td>
+              <td>{row.opened}</td>
+              <td>{row.done}</td>
+              <td className="col-rate">
+                <span className="rate-bar small fixed" aria-hidden="true">
+                  <i style={{ width: `${row.doneRate}%` }} />
+                </span>
+                {row.doneRate.toFixed(0)}%
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length > limit ? (
+        <button type="button" className="btn ghost small" onClick={() => setShowAll(v => !v)}>
+          {showAll ? 'Tampilkan lebih sedikit' : `Tampilkan semua (${rows.length})`}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+function RepairFixTable({ fixes, multiDay }: { fixes: RepairFix[]; multiDay: boolean }) {
+  const [showAll, setShowAll] = useState(false);
+  const LIMIT = 8;
+  const visible = showAll ? fixes : fixes.slice(0, LIMIT);
+
+  return (
+    <>
+      <table className="stat-table fix-table">
+        <thead>
+          <tr>
+            <th>FrameNumber</th>
+            <th>Model</th>
+            <th>Repair</th>
+            <th>Selesai</th>
+            <th>Lama</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visible.map(fix => (
+            <tr key={fix.closed.id}>
+              <td className="col-name">
+                <code>{fix.frameNumber || '-'}</code>
+              </td>
+              <td className="col-left">{cleanText(fix.opened.modelName)}</td>
+              <td className="nowrap">
+                {formatZoneTime(fix.opened.epochMs)}
+                {multiDay ? <em>{formatZoneDate(fix.opened.epochMs)}</em> : null}
+              </td>
+              <td className="nowrap">
+                {formatZoneTime(fix.closed.epochMs)}
+                {multiDay ? <em>{formatZoneDate(fix.closed.epochMs)}</em> : null}
+              </td>
+              <td className="nowrap">{formatDuration(fix.durationMs)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {fixes.length > LIMIT ? (
+        <button type="button" className="btn ghost small" onClick={() => setShowAll(v => !v)}>
+          {showAll ? 'Tampilkan lebih sedikit' : `Tampilkan semua (${fixes.length})`}
+        </button>
+      ) : null}
+    </>
   );
 }
 
@@ -628,8 +928,12 @@ function OperatorTable({ rows }: { rows: OperatorStat[] }) {
 // Catatan mutu data: hal-hal yang mengubah angka kalau diabaikan.
 function DataNotes({ board }: { board: TaskBoard }) {
   const q = board.quality;
+  const r = board.repairWork;
   const broken = board.unique.filter(hasBrokenText);
-  if (!q.superseded && !q.brokenText && !q.missingTimestamp) return null;
+  if (!q.followUps && !q.brokenText && !q.missingTimestamp) return null;
+
+  // Entri pertama tiap FrameNumber, untuk menampilkan "dari → jadi".
+  const firstOf = new Map(board.unique.map(row => [row.frameNumber, row]));
 
   return (
     <section className="panel-section notes">
@@ -643,33 +947,46 @@ function DataNotes({ board }: { board: TaskBoard }) {
       </header>
 
       <ul>
-        {q.superseded ? (
+        {q.followUps ? (
           <li>
             <Wrench size={14} />
             <div>
-              <b>{q.superseded} entri ditimpa.</b> Ada FrameNumber yang tercatat lebih dari
-              sekali; yang dipakai entri paling akhir
-              {q.changedStatus ? `, dan ${q.changedStatus} di antaranya statusnya berubah` : ''}.
-              Semuanya ada di sheet <i>Entri Ditimpa</i> pada file Excel.
+              <b>{q.followUps} entri susulan.</b> Ada FrameNumber yang tercatat lebih dari sekali.
+              Achievement pemeriksaan tetap memakai entri pertama
+              {q.changedStatus ? `, dan ${q.changedStatus} unit statusnya berubah di entri berikutnya` : ''}
+              {r.done ? `; ${r.done} di antaranya repair yang selesai dan dihitung di papan pengerjaan repair` : ''}.
+              Semuanya ada di sheet <i>Entri Susulan</i> pada file Excel.
               <ul className="dup-list">
-                {board.superseded.slice(0, 4).map(row => {
-                  const final = board.unique.find(u => u.frameNumber === row.frameNumber);
+                {board.followUps.slice(0, 4).map(row => {
+                  const first = firstOf.get(row.frameNumber);
                   return (
                     <li key={row.id}>
-                      <code>{row.frameNumber}</code> {row.status} {formatZoneTime(row.epochMs)}
-                      {final ? (
+                      <code>{row.frameNumber}</code>{' '}
+                      {first ? (
                         <>
+                          {first.status} {formatZoneTime(first.epochMs)}
                           {' → '}
-                          <b>{final.status}</b> {formatZoneTime(final.epochMs)}
                         </>
                       ) : null}
+                      <b>{row.status}</b> {formatZoneTime(row.epochMs)}
                     </li>
                   );
                 })}
-                {board.superseded.length > 4 ? (
-                  <li className="muted">dan {board.superseded.length - 4} lainnya…</li>
+                {board.followUps.length > 4 ? (
+                  <li className="muted">dan {board.followUps.length - 4} lainnya…</li>
                 ) : null}
               </ul>
+            </div>
+          </li>
+        ) : null}
+
+        {r.reopened ? (
+          <li>
+            <AlertTriangle size={14} />
+            <div>
+              <b>{r.reopened} unit awalnya OK lalu jadi repair.</b> Arahnya kebalikan dari
+              pengerjaan repair, jadi tidak ikut dihitung sebagai repair selesai. Unitnya tetap
+              terhitung OK di achievement pemeriksaan karena entri pertamanya OK.
             </div>
           </li>
         ) : null}
