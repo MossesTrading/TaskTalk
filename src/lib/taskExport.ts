@@ -10,9 +10,10 @@ import {
 import { downloadXlsx, toExcelDate, type XlsxSheet } from './xlsx';
 
 // Susunan file Excel yang diunduh dari kartu dashboard.
-// Angkanya sama persis dengan yang tampil di layar: semua berbasis `unique`
-// (satu baris per FrameNumber, entri terakhir yang dipakai). Entri lama tidak
-// dibuang diam-diam — ditaruh di sheet "Entri Ditimpa" supaya bisa ditelusuri.
+// Angkanya sama persis dengan yang tampil di layar: pemeriksaan berbasis
+// `unique` (satu baris per FrameNumber, entri PERTAMA yang dipakai), sedangkan
+// pengerjaan repair punya sheet sendiri dan tidak dijumlahkan ke sana.
+// Entri susulan tidak dibuang diam-diam — ada di sheet "Entri Susulan".
 
 function round(value: number, digits = 1) {
   const f = 10 ** digits;
@@ -53,6 +54,7 @@ const DATA_COLUMNS = [
 
 export function buildTaskSheets(board: TaskBoard, periodLabel: string): XlsxSheet[] {
   const t = board.totals;
+  const r = board.repairWork;
 
   const ringkasan: XlsxSheet = {
     name: 'Ringkasan',
@@ -65,12 +67,22 @@ export function buildTaskSheets(board: TaskBoard, periodLabel: string): XlsxShee
       [null, null],
       ['Unit unik diperiksa', t.units],
       ['Total entri tersimpan', t.records],
-      ['Entri ditimpa (revisi)', board.quality.superseded],
+      ['Entri susulan (pemeriksaan ulang)', board.quality.followUps],
       [null, null],
+      ['— Pemeriksaan awal (entri pertama) —', null],
       ['OK', t.ok],
       ['Repair', t.repair],
       ['Status lain', t.other],
       ['Repair (%)', round(t.repairRate, 2)],
+      [null, null],
+      ['— Pengerjaan repair (dihitung terpisah) —', null],
+      ['Unit repair', r.opened],
+      ['Repair selesai (jadi OK)', r.done],
+      ['Repair belum selesai', r.open],
+      ['Selesai (%)', round(r.doneRate, 2)],
+      ['Rata-rata lama perbaikan', formatDuration(r.avgMs)],
+      ['Median lama perbaikan', formatDuration(r.medianMs)],
+      ['Berubah OK -> repair', r.reopened],
       [null, null],
       ['Mulai', dateCell(board.firstMs)],
       ['Selesai', dateCell(board.lastMs)],
@@ -160,14 +172,78 @@ export function buildTaskSheets(board: TaskBoard, periodLabel: string): XlsxShee
     data,
   ];
 
-  if (board.superseded.length) {
+  if (r.opened) {
+    // Disiapkan sekali di depan supaya sheet di bawah tidak menelusuri ulang
+    // seluruh daftar untuk tiap barisnya.
+    const fixedIds = new Set(r.fixes.map(fix => fix.opened.id));
+    const lastStatus = new Map<string, string>();
+    for (const row of board.followUps) lastStatus.set(row.frameNumber, row.status);
+
+    sheets.push(
+      {
+        name: 'Repair Selesai',
+        columns: [
+          'FrameNumber',
+          'Model',
+          'Tipe',
+          'Area',
+          `Repair (${TZ_LABEL})`,
+          'Petugas repair',
+          `Selesai (${TZ_LABEL})`,
+          'Petugas selesai',
+          'Lama',
+          'Lama (jam)',
+        ],
+        rows: r.fixes.map(fix => [
+          fix.frameNumber,
+          fix.opened.modelName,
+          cleanText(fix.opened.typeName),
+          fix.closed.areaProcess,
+          dateCell(fix.opened.epochMs),
+          fix.opened.createdByName,
+          dateCell(fix.closed.epochMs),
+          fix.closed.createdByName,
+          formatDuration(fix.durationMs),
+          Number.isFinite(fix.durationMs) ? round(fix.durationMs / 3600000, 2) : null,
+        ]),
+        widths: [20, 18, 22, 14, 18, 20, 18, 20, 12, 11],
+      },
+      {
+        name: 'Repair Per Jam',
+        columns: ['Tanggal', `Jam (${TZ_LABEL})`, 'Repair selesai'],
+        rows: r.byHour.map(b => [b.dayLabel, b.label, b.total]),
+      },
+      {
+        name: 'Repair Per Petugas',
+        columns: ['Petugas', 'Repair selesai', 'Mulai', 'Selesai', 'Unit / jam', 'Rata-rata lama'],
+        rows: r.byOperator.map(o => [
+          o.key,
+          o.done,
+          dateCell(o.firstMs),
+          dateCell(o.lastMs),
+          round(o.perHour, 2),
+          formatDuration(o.avgMs),
+        ]),
+      },
+      {
+        name: 'Repair Belum Selesai',
+        columns: [...DATA_COLUMNS, 'Status terakhir'],
+        rows: board.unique
+          .filter(row => row.status.trim().toLowerCase() === 'repair' && !fixedIds.has(row.id))
+          .map(row => [...rowCells(row), lastStatus.get(row.frameNumber) ?? row.status]),
+      },
+    );
+  }
+
+  if (board.followUps.length) {
+    const firstStatus = new Map(board.unique.map(row => [row.frameNumber, row.status]));
     sheets.push({
-      name: 'Entri Ditimpa',
-      columns: [...DATA_COLUMNS, 'Status akhir dipakai'],
-      rows: board.superseded.map(row => {
-        const final = board.unique.find(u => u.frameNumber === row.frameNumber);
-        return [...rowCells(row), final ? final.status : '-'];
-      }),
+      name: 'Entri Susulan',
+      columns: [...DATA_COLUMNS, 'Status awal dipakai'],
+      rows: board.followUps.map(row => [
+        ...rowCells(row),
+        firstStatus.get(row.frameNumber) ?? '-',
+      ]),
     });
   }
 
