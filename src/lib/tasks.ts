@@ -373,18 +373,85 @@ export type OperatorStat = GroupStat & {
   perHour: number;
 };
 
+/**
+ * Satu unit yang selesai dikerjakan: entri pertamanya repair, lalu ada entri
+ * susulan yang menyatakan OK.
+ */
+export type RepairFix = {
+  frameNumber: string;
+  /** Entri pertama — saat unit dinyatakan repair. */
+  opened: TaskRow;
+  /** Entri terakhir — saat unit dinyatakan OK. */
+  closed: TaskRow;
+  /** Jarak repair → OK. NaN kalau salah satu waktunya tidak terbaca. */
+  durationMs: number;
+};
+
+export type RepairOperatorStat = {
+  key: string;
+  done: number;
+  firstMs: number;
+  lastMs: number;
+  perHour: number;
+  /** Rata-rata jarak repair → OK dari unit yang ditutup petugas ini. */
+  avgMs: number;
+};
+
+export type RepairGroupStat = {
+  key: string;
+  /** Unit yang pemeriksaan awalnya repair. */
+  opened: number;
+  done: number;
+  open: number;
+  doneRate: number;
+};
+
+/**
+ * Papan kedua: achievement PENGERJAAN REPAIR.
+ * Hitungannya berdiri sendiri dan tidak digabung ke angka pemeriksaan awal —
+ * satu unit bisa muncul di dua tempat (repair di papan pertama, selesai di sini).
+ */
+export type RepairWork = {
+  /** Unit yang entri pertamanya repair (sama dengan totals.repair). */
+  opened: number;
+  /** Repair yang entri terakhirnya sudah OK. */
+  done: number;
+  /** Repair yang belum dinyatakan OK. */
+  open: number;
+  /** done / opened, dalam persen. */
+  doneRate: number;
+  /** Awalnya OK lalu berubah jadi repair — tidak masuk hitungan di atas. */
+  reopened: number;
+  fixes: RepairFix[];
+  /** Per jam, memakai waktu entri OK-nya (saat repair dinyatakan selesai). */
+  byHour: HourBucket[];
+  byHourOfDay: HourBucket[];
+  dayCount: number;
+  byOperator: RepairOperatorStat[];
+  byModel: RepairGroupStat[];
+  byZone: RepairGroupStat[];
+  avgMs: number;
+  medianMs: number;
+  busiestHour: HourBucket | null;
+  firstMs: number;
+  lastMs: number;
+  perHour: number;
+};
+
 export type TaskBoard = {
   job: string;
   /** Baris tabel master yang cocok, kalau ada. */
   def: TaskDef | null;
   jenis: string | null;
   active: boolean;
-  /** Semua baris apa adanya, termasuk yang nanti ditimpa. */
+  /** Semua baris apa adanya, termasuk entri susulan. */
   all: TaskRow[];
-  /** Satu baris per FrameNumber: entri paling akhir yang dipakai. */
+  /** Satu baris per FrameNumber: entri PERTAMA (pemeriksaan awal) yang dipakai. */
   unique: TaskRow[];
-  /** Entri lama yang ditimpa entri lebih baru pada FrameNumber yang sama. */
-  superseded: TaskRow[];
+  /** Entri susulan pada FrameNumber yang sudah pernah tercatat. */
+  followUps: TaskRow[];
+  /** Achievement pengerjaan repair, dihitung terpisah dari angka di bawah. */
+  repairWork: RepairWork;
   totals: {
     records: number;
     units: number;
@@ -410,7 +477,7 @@ export type TaskBoard = {
   spanMs: number;
   perHour: number;
   quality: {
-    superseded: number;
+    followUps: number;
     changedStatus: number;
     brokenText: number;
     missingTimestamp: number;
@@ -502,8 +569,10 @@ export function cleanText(value: string) {
 
 /**
  * Kelompokkan baris jadi papan per Job, sekaligus menerapkan aturan:
- * kalau satu FrameNumber punya lebih dari satu entri, yang dipakai adalah
- * entri PALING AKHIR (timestamp terbesar; kalau sama, id terbesar).
+ * kalau satu FrameNumber punya lebih dari satu entri, yang dipakai untuk
+ * achievement pemeriksaan adalah entri PERTAMA (timestamp terkecil; kalau sama,
+ * id terkecil). Entri berikutnya tidak menimpa angka itu — dipakai untuk
+ * achievement pengerjaan repair yang dihitung terpisah.
  */
 export function buildBoards(rows: TaskRow[], defs: TaskDef[] = []): TaskBoard[] {
   const perJob = new Map<string, TaskRow[]>();
@@ -530,31 +599,260 @@ export function buildBoards(rows: TaskRow[], defs: TaskDef[] = []): TaskBoard[] 
   );
 }
 
-function isNewer(candidate: TaskRow, current: TaskRow) {
-  const a = Number.isNaN(candidate.epochMs) ? -Infinity : candidate.epochMs;
-  const b = Number.isNaN(current.epochMs) ? -Infinity : current.epochMs;
-  if (a !== b) return a > b;
-  return candidate.id > current.id;
+const timeOf = (row: TaskRow) => (Number.isNaN(row.epochMs) ? Infinity : row.epochMs);
+
+/** Urut dari entri paling awal; entri tanpa waktu terbaca ditaruh paling belakang. */
+function byTime(a: TaskRow, b: TaskRow) {
+  const ta = timeOf(a);
+  const tb = timeOf(b);
+  if (ta !== tb) return ta < tb ? -1 : 1;
+  return a.id - b.id;
+}
+
+/** Satu batang per jam kalender. Entri tanpa waktu terbaca dilewati. */
+function bucketByHour(rows: TaskRow[]): HourBucket[] {
+  const map = new Map<string, HourBucket>();
+  for (const row of rows) {
+    if (Number.isNaN(row.epochMs)) continue;
+    const { key, hour } = hourKey(row.epochMs);
+    let bucket = map.get(key);
+    if (!bucket) {
+      bucket = {
+        key,
+        label: `${String(hour).padStart(2, '0')}.00`,
+        dayLabel: formatZoneDate(row.epochMs),
+        hour,
+        total: 0,
+        ok: 0,
+        repair: 0,
+        other: 0,
+      };
+      map.set(key, bucket);
+    }
+    bucket.total += 1;
+    bucket[classify(row.status)] += 1;
+  }
+  return [...map.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/**
+ * Versi gabungan: semua tanggal ditumpuk ke jam 00–23. Dipakai saat rentangnya
+ * lebih dari beberapa hari, supaya grafiknya tetap terbaca (dan tidak
+ * menggambar ribuan batang) sekaligus menjawab "jam berapa paling produktif".
+ */
+function mergeHourOfDay(buckets: HourBucket[]): HourBucket[] {
+  const map = new Map<string, HourBucket>();
+  for (const bucket of buckets) {
+    const hh = String(bucket.hour).padStart(2, '0');
+    let merged = map.get(hh);
+    if (!merged) {
+      merged = {
+        key: hh,
+        label: `${hh}.00`,
+        dayLabel: '',
+        hour: bucket.hour,
+        total: 0,
+        ok: 0,
+        repair: 0,
+        other: 0,
+      };
+      map.set(hh, merged);
+    }
+    merged.total += bucket.total;
+    merged.ok += bucket.ok;
+    merged.repair += bucket.repair;
+    merged.other += bucket.other;
+  }
+  return [...map.values()].sort((a, b) => a.hour - b.hour);
+}
+
+function busiestOf(buckets: HourBucket[]) {
+  return buckets.reduce<HourBucket | null>(
+    (best, bucket) => (!best || bucket.total > best.total ? bucket : best),
+    null,
+  );
+}
+
+function countDays(buckets: HourBucket[]) {
+  return new Set(buckets.map(b => b.key.slice(0, 10))).size;
+}
+
+function average(values: number[]) {
+  if (values.length === 0) return Number.NaN;
+  let sum = 0;
+  for (const v of values) sum += v;
+  return sum / values.length;
+}
+
+// Median lebih jujur daripada rata-rata untuk lama perbaikan: satu unit yang
+// baru ditutup besok paginya bisa menarik rata-ratanya jauh ke atas.
+function median(values: number[]) {
+  if (values.length === 0) return Number.NaN;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function emptyRepairGroup(key: string): RepairGroupStat {
+  return { key, opened: 0, done: 0, open: 0, doneRate: 0 };
+}
+
+function bumpRepairGroup(map: Map<string, RepairGroupStat>, key: string, done: boolean) {
+  let stat = map.get(key);
+  if (!stat) {
+    stat = emptyRepairGroup(key);
+    map.set(key, stat);
+  }
+  stat.opened += 1;
+  if (done) stat.done += 1;
+  else stat.open += 1;
+}
+
+function finishRepairGroups(map: Map<string, RepairGroupStat>) {
+  const out = [...map.values()];
+  for (const stat of out) {
+    stat.doneRate = stat.opened ? (stat.done / stat.opened) * 100 : 0;
+  }
+  return out.sort((a, b) => b.opened - a.opened || a.key.localeCompare(b.key));
+}
+
+/**
+ * Achievement pengerjaan repair.
+ *
+ * Aturannya: satu unit yang tercatat lebih dari sekali dilihat dari entri
+ * pertama dan entri terakhirnya. Kalau yang pertama repair dan yang terakhir
+ * sudah OK, itu satu repair yang selesai dikerjakan — dicatat di sini, bukan
+ * ditambahkan ke kolom OK pemeriksaan awal.
+ */
+function buildRepairWork(history: Map<string, TaskRow[]>): RepairWork {
+  const fixes: RepairFix[] = [];
+  const modelMap = new Map<string, RepairGroupStat>();
+  const zoneMap = new Map<string, RepairGroupStat>();
+  let opened = 0;
+  let open = 0;
+  let reopened = 0;
+
+  for (const list of history.values()) {
+    const first = list[0];
+    const last = list[list.length - 1];
+
+    if (classify(first.status) !== 'repair') {
+      // Kebalikannya: awalnya OK/lainnya lalu jadi repair. Bukan pengerjaan
+      // repair, tapi tetap dihitung supaya bisa disebut di catatan data.
+      if (list.length > 1 && classify(last.status) === 'repair') reopened += 1;
+      continue;
+    }
+
+    opened += 1;
+    const done = list.length > 1 && classify(last.status) === 'ok';
+    if (done) {
+      const durationMs =
+        Number.isNaN(first.epochMs) || Number.isNaN(last.epochMs)
+          ? Number.NaN
+          : last.epochMs - first.epochMs;
+      fixes.push({ frameNumber: first.frameNumber, opened: first, closed: last, durationMs });
+    } else {
+      open += 1;
+    }
+
+    bumpRepairGroup(modelMap, first.modelName, done);
+    bumpRepairGroup(zoneMap, zoneOf(first.areaProcess), done);
+  }
+
+  fixes.sort((a, b) => byTime(a.closed, b.closed));
+
+  // Waktunya memakai entri OK-nya: itu saat pekerjaannya benar-benar selesai.
+  const closedRows = fixes.map(fix => fix.closed);
+  const byHour = bucketByHour(closedRows);
+  const byHourOfDay = mergeHourOfDay(byHour);
+
+  const operatorMap = new Map<
+    string,
+    { stat: RepairOperatorStat; sum: number; counted: number }
+  >();
+  for (const fix of fixes) {
+    const name = fix.closed.createdByName;
+    let entry = operatorMap.get(name);
+    if (!entry) {
+      entry = {
+        stat: { key: name, done: 0, firstMs: Infinity, lastMs: -Infinity, perHour: 0, avgMs: Number.NaN },
+        sum: 0,
+        counted: 0,
+      };
+      operatorMap.set(name, entry);
+    }
+    entry.stat.done += 1;
+    if (!Number.isNaN(fix.closed.epochMs)) {
+      entry.stat.firstMs = Math.min(entry.stat.firstMs, fix.closed.epochMs);
+      entry.stat.lastMs = Math.max(entry.stat.lastMs, fix.closed.epochMs);
+    }
+    if (Number.isFinite(fix.durationMs) && fix.durationMs >= 0) {
+      entry.sum += fix.durationMs;
+      entry.counted += 1;
+    }
+  }
+  const byOperator = [...operatorMap.values()]
+    .map(({ stat, sum, counted }) => {
+      const span = stat.lastMs - stat.firstMs;
+      stat.perHour = span > 0 ? stat.done / (span / 3600000) : stat.done;
+      stat.avgMs = counted ? sum / counted : Number.NaN;
+      return stat;
+    })
+    .sort((a, b) => b.done - a.done || a.key.localeCompare(b.key));
+
+  const durations = fixes
+    .map(fix => fix.durationMs)
+    .filter(ms => Number.isFinite(ms) && ms >= 0);
+  const times = closedRows.map(row => row.epochMs).filter(ms => !Number.isNaN(ms));
+  const { min: firstMs, max: lastMs } = times.length
+    ? minMax(times)
+    : { min: Number.NaN, max: Number.NaN };
+
+  return {
+    opened,
+    done: fixes.length,
+    open,
+    doneRate: opened ? (fixes.length / opened) * 100 : 0,
+    reopened,
+    fixes,
+    byHour,
+    byHourOfDay,
+    dayCount: countDays(byHour),
+    byOperator,
+    byModel: finishRepairGroups(modelMap),
+    byZone: finishRepairGroups(zoneMap),
+    avgMs: average(durations),
+    medianMs: median(durations),
+    busiestHour: busiestOf(byHour),
+    firstMs,
+    lastMs,
+    perHour: byHour.length ? fixes.length / byHour.length : 0,
+  };
 }
 
 function buildBoard(job: string, all: TaskRow[], def: TaskDef | null): TaskBoard {
-  // 1 unit = 1 FrameNumber. Entri terakhir menang.
-  const latest = new Map<string, TaskRow>();
+  // Riwayat tiap unit (1 unit = 1 FrameNumber), urut dari entri paling awal.
+  const history = new Map<string, TaskRow[]>();
   for (const row of all) {
     const key = row.frameNumber || `#${row.id}`;
-    const current = latest.get(key);
-    if (!current || isNewer(row, current)) latest.set(key, row);
+    const list = history.get(key);
+    if (list) list.push(row);
+    else history.set(key, [row]);
   }
-  const unique = [...latest.values()].sort((a, b) => a.epochMs - b.epochMs || a.id - b.id);
-  const kept = new Set(unique.map(row => row.id));
-  const superseded = all.filter(row => !kept.has(row.id));
+  for (const list of history.values()) list.sort(byTime);
 
-  // Berapa unit yang status akhirnya berbeda dari entri pertamanya —
-  // penanda entri yang dikoreksi, bukan dua pemeriksaan berbeda.
+  // Achievement pemeriksaan: entri PERTAMA yang dipakai. Entri susulan tidak
+  // menimpanya — kalau repair lalu jadi OK, itu masuk papan pengerjaan repair.
+  const unique = [...history.values()].map(list => list[0]).sort(byTime);
+  const firstIds = new Set(unique.map(row => row.id));
+  const followUps = all.filter(row => !firstIds.has(row.id));
+
+  const repairWork = buildRepairWork(history);
+
+  // Berapa unit yang status akhirnya berbeda dari entri pertamanya.
   let changedStatus = 0;
-  for (const old of superseded) {
-    const final = latest.get(old.frameNumber || `#${old.id}`);
-    if (final && final.status !== old.status) changedStatus += 1;
+  for (const list of history.values()) {
+    if (list.length > 1 && list[list.length - 1].status !== list[0].status) changedStatus += 1;
   }
 
   const counts = { ok: 0, repair: 0, other: 0 };
@@ -572,57 +870,10 @@ function buildBoard(job: string, all: TaskRow[], def: TaskDef | null): TaskBoard
     }))
     .sort((a, b) => b.count - a.count);
 
-  // Jam kerja: tiap unit dihitung sekali, pada jam entri terakhirnya.
-  const hourMap = new Map<string, HourBucket>();
-  for (const row of unique) {
-    if (Number.isNaN(row.epochMs)) continue;
-    const { key, hour } = hourKey(row.epochMs);
-    let bucket = hourMap.get(key);
-    if (!bucket) {
-      bucket = {
-        key,
-        label: `${String(hour).padStart(2, '0')}.00`,
-        dayLabel: formatZoneDate(row.epochMs),
-        hour,
-        total: 0,
-        ok: 0,
-        repair: 0,
-        other: 0,
-      };
-      hourMap.set(key, bucket);
-    }
-    bucket.total += 1;
-    bucket[classify(row.status)] += 1;
-  }
-  const byHour = [...hourMap.values()].sort((a, b) => a.key.localeCompare(b.key));
-
-  // Versi gabungan: semua tanggal ditumpuk ke jam 00–23. Dipakai saat rentangnya
-  // lebih dari beberapa hari, supaya grafiknya tetap terbaca (dan tidak
-  // menggambar ribuan batang) sekaligus menjawab "jam berapa paling produktif".
-  const dayCount = new Set(byHour.map(b => b.key.slice(0, 10))).size;
-  const hourOfDayMap = new Map<string, HourBucket>();
-  for (const bucket of byHour) {
-    const hh = String(bucket.hour).padStart(2, '0');
-    let merged = hourOfDayMap.get(hh);
-    if (!merged) {
-      merged = {
-        key: hh,
-        label: `${hh}.00`,
-        dayLabel: '',
-        hour: bucket.hour,
-        total: 0,
-        ok: 0,
-        repair: 0,
-        other: 0,
-      };
-      hourOfDayMap.set(hh, merged);
-    }
-    merged.total += bucket.total;
-    merged.ok += bucket.ok;
-    merged.repair += bucket.repair;
-    merged.other += bucket.other;
-  }
-  const byHourOfDay = [...hourOfDayMap.values()].sort((a, b) => a.hour - b.hour);
+  // Jam kerja: tiap unit dihitung sekali, pada jam pemeriksaan pertamanya.
+  const byHour = bucketByHour(unique);
+  const byHourOfDay = mergeHourOfDay(byHour);
+  const dayCount = countDays(byHour);
 
   const times = unique.map(row => row.epochMs).filter(ms => !Number.isNaN(ms));
   const { min: firstMs, max: lastMs } = times.length
@@ -655,11 +906,6 @@ function buildBoard(job: string, all: TaskRow[], def: TaskDef | null): TaskBoard
     })
     .sort((a, b) => b.total - a.total);
 
-  const busiestHour = byHour.reduce<HourBucket | null>(
-    (best, bucket) => (!best || bucket.total > best.total ? bucket : best),
-    null,
-  );
-
   return {
     job,
     def,
@@ -667,7 +913,8 @@ function buildBoard(job: string, all: TaskRow[], def: TaskDef | null): TaskBoard
     active: def ? def.active : true,
     all,
     unique,
-    superseded,
+    followUps,
+    repairWork,
     totals: {
       records: all.length,
       units: unique.length,
@@ -684,13 +931,13 @@ function buildBoard(job: string, all: TaskRow[], def: TaskDef | null): TaskBoard
     byArea: groupBy(unique, row => row.areaProcess),
     byZone: groupBy(unique, row => zoneOf(row.areaProcess)),
     byOperator,
-    busiestHour,
+    busiestHour: busiestOf(byHour),
     firstMs,
     lastMs,
     spanMs,
     perHour,
     quality: {
-      superseded: superseded.length,
+      followUps: followUps.length,
       changedStatus,
       brokenText: unique.filter(hasBrokenText).length,
       missingTimestamp: all.filter(row => Number.isNaN(row.epochMs)).length,
