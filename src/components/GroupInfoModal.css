@@ -49,6 +49,42 @@
   margin: 4px 0 0;
 }
 
+.group-description {
+  padding: 0 20px 16px;
+}
+
+.group-description p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.group-description .textarea {
+  margin-bottom: 8px;
+}
+
+.description-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.add-member-row {
+  padding: 0 20px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.member-actions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.member-actions .icon-only {
+  width: 36px;
+  padding: 0;
+}
+
 .member-list {
   flex: 1;
   min-height: 0;
@@ -68,6 +104,12 @@
 
 .member-list li:hover {
   background: var(--surface);
+}
+
+.member-list li.empty-hint {
+  justify-content: center;
+  padding: 24px 8px;
+  text-align: center;
 }
 
 .member-list .info {

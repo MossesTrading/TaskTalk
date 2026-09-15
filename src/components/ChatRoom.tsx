@@ -92,6 +92,15 @@ export function ChatRoom({ roomId }: { roomId: string }) {
   const peerPresence = usePresence(isGroup ? null : peer?.user_id);
 
   // ─── Muat data ───
+  const loadInfo = useCallback(async () => {
+    try {
+      const next = await fetchRoomInfo(roomId);
+      setInfo(next);
+    } catch (error) {
+      console.warn('Gagal memuat info room', error);
+    }
+  }, [roomId]);
+
   const loadLatest = useCallback(async () => {
     try {
       const latest = await fetchMessages(roomId);
@@ -118,12 +127,10 @@ export function ChatRoom({ roomId }: { roomId: string }) {
   }, [roomId, myId]);
 
   useEffect(() => {
-    fetchRoomInfo(roomId)
-      .then(setInfo)
-      .catch(error => console.warn('Gagal memuat info room', error));
+    loadInfo();
     loadLatest();
     loadMembers();
-  }, [roomId, loadLatest, loadMembers]);
+  }, [roomId, loadInfo, loadLatest, loadMembers]);
 
   useEffect(
     () =>
@@ -136,6 +143,7 @@ export function ChatRoom({ roomId }: { roomId: string }) {
         },
         onMessageUpdated: message =>
           setMessages(current => mergeMessages(current, [message])),
+        onInfoUpdated: setInfo,
         onResync: loadLatest,
       }),
     [roomId, myId, markRead, loadLatest],
@@ -599,7 +607,10 @@ export function ChatRoom({ roomId }: { roomId: string }) {
           myId={myId}
           myName={profile?.full_name ?? ''}
           onClose={() => setShowInfo(false)}
-          onChanged={loadMembers}
+          onChanged={() => {
+            loadMembers();
+            loadInfo();
+          }}
           onLeft={() => {
             setShowInfo(false);
             reload();

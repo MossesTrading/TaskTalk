@@ -37,6 +37,7 @@ export type ChatRoomInfo = {
   type: 'direct' | 'group';
   name: string | null;
   avatar_path: string | null;
+  description: string | null;
 };
 
 export type RoomMember = {
@@ -60,6 +61,7 @@ export type MemberChange = {
 
 export const MESSAGE_PAGE_SIZE = 50;
 export const GROUP_NAME_MAX_LENGTH = 60;
+export const GROUP_DESCRIPTION_MAX_LENGTH = 500;
 const MESSAGE_COLUMNS =
   'id, room_id, sender_id, kind, content, attachment_path, attachment_width, attachment_height, deleted_at, created_at';
 
@@ -93,7 +95,7 @@ export async function fetchRoomInfo(
 ): Promise<ChatRoomInfo | null> {
   const { data, error } = await supabase
     .from('chat_rooms')
-    .select('id, type, name, avatar_path')
+    .select('id, type, name, avatar_path, description')
     .eq('id', roomId)
     .maybeSingle();
   if (error) {
@@ -252,6 +254,44 @@ export async function removeMember(roomId: string, userId: string) {
   }
 }
 
+// Tambah anggota baru ke grup (khusus admin — dicek juga di sisi server).
+export async function addMembers(roomId: string, memberIds: string[]) {
+  const { error } = await supabase.rpc('chat_add_members', {
+    p_room_id: roomId,
+    p_member_ids: memberIds,
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+// Jadikan admin / cabut status admin seorang anggota (khusus admin).
+export async function setMemberRole(
+  roomId: string,
+  userId: string,
+  role: RoomMember['role'],
+) {
+  const { error } = await supabase.rpc('chat_set_member_role', {
+    p_room_id: roomId,
+    p_user_id: userId,
+    p_role: role,
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+// Ubah deskripsi grup (khusus admin). Kirim string kosong untuk menghapus deskripsi.
+export async function updateGroupDescription(roomId: string, description: string) {
+  const { error } = await supabase.rpc('chat_update_group_description', {
+    p_room_id: roomId,
+    p_description: description.trim(),
+  });
+  if (error) {
+    throw error;
+  }
+}
+
 export async function markRoomRead(roomId: string) {
   const { error } = await supabase.rpc('chat_mark_room_read', {
     p_room_id: roomId,
@@ -261,12 +301,13 @@ export async function markRoomRead(roomId: string) {
   }
 }
 
-// Pesan baru & pesan yang dihapus di satu room.
+// Pesan baru & pesan yang dihapus di satu room, plus info room (nama/foto/deskripsi) yang berubah.
 export function subscribeToRoom(
   roomId: string,
   handlers: {
     onMessage: (message: ChatMessage) => void;
     onMessageUpdated: (message: ChatMessage) => void;
+    onInfoUpdated?: (info: ChatRoomInfo) => void;
     onResync: () => void;
   },
 ) {
@@ -285,6 +326,12 @@ export function subscribeToRoom(
         table: 'chat_messages',
         filter,
         onChange: change => handlers.onMessageUpdated(change.new as ChatMessage),
+      },
+      {
+        event: 'UPDATE',
+        table: 'chat_rooms',
+        filter: `id=eq.${roomId}`,
+        onChange: change => handlers.onInfoUpdated?.(change.new as ChatRoomInfo),
       },
     ],
     { onResync: handlers.onResync },
