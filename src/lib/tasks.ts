@@ -374,8 +374,22 @@ export type OperatorStat = GroupStat & {
 };
 
 /**
- * Satu unit yang selesai dikerjakan: entri pertamanya repair, lalu ada entri
- * susulan yang menyatakan OK.
+ * Jenis entri susulan:
+ * - `repair`  : bagian dari pengerjaan repair (unit ini memang berstatus repair).
+ * - `koreksi` : entri OK yang dikoreksi oleh entri repair sesudahnya.
+ * - `ganda`   : sisanya — entri berulang yang tidak mengubah hasil.
+ */
+export type FollowUpKind = 'repair' | 'koreksi' | 'ganda';
+
+export type FollowUp = {
+  row: TaskRow;
+  /** Entri yang dipakai achievement pemeriksaan untuk unit yang sama. */
+  base: TaskRow;
+  kind: FollowUpKind;
+};
+
+/**
+ * Satu unit yang selesai dikerjakan: entri repair-nya lalu disusul entri OK.
  */
 export type RepairFix = {
   frameNumber: string;
@@ -412,7 +426,7 @@ export type RepairGroupStat = {
  * satu unit bisa muncul di dua tempat (repair di papan pertama, selesai di sini).
  */
 export type RepairWork = {
-  /** Unit yang entri pertamanya repair (sama dengan totals.repair). */
+  /** Unit yang dihitung repair di pemeriksaan (sama dengan totals.repair). */
   opened: number;
   /** Repair yang entri terakhirnya sudah OK. */
   done: number;
@@ -420,8 +434,6 @@ export type RepairWork = {
   open: number;
   /** done / opened, dalam persen. */
   doneRate: number;
-  /** Awalnya OK lalu berubah jadi repair — tidak masuk hitungan di atas. */
-  reopened: number;
   fixes: RepairFix[];
   /** Per jam, memakai waktu entri OK-nya (saat repair dinyatakan selesai). */
   byHour: HourBucket[];
@@ -446,10 +458,10 @@ export type TaskBoard = {
   active: boolean;
   /** Semua baris apa adanya, termasuk entri susulan. */
   all: TaskRow[];
-  /** Satu baris per FrameNumber: entri PERTAMA (pemeriksaan awal) yang dipakai. */
+  /** Satu baris per FrameNumber: entri yang dipakai achievement pemeriksaan. */
   unique: TaskRow[];
-  /** Entri susulan pada FrameNumber yang sudah pernah tercatat. */
-  followUps: TaskRow[];
+  /** Entri susulan, sudah dipilah jenisnya. */
+  followUps: FollowUp[];
   /** Achievement pengerjaan repair, dihitung terpisah dari angka di bawah. */
   repairWork: RepairWork;
   totals: {
@@ -478,7 +490,12 @@ export type TaskBoard = {
   perHour: number;
   quality: {
     followUps: number;
-    changedStatus: number;
+    /** Entri susulan yang merupakan pengerjaan repair — bukan entri ganda. */
+    repairEntries: number;
+    /** Unit yang entri OK-nya dikoreksi jadi repair. */
+    corrections: number;
+    /** Sisanya: entri berulang yang tidak mengubah hasil apa pun. */
+    duplicates: number;
     brokenText: number;
     missingTimestamp: number;
   };
@@ -716,47 +733,95 @@ function finishRepairGroups(map: Map<string, RepairGroupStat>) {
   return out.sort((a, b) => b.opened - a.opened || a.key.localeCompare(b.key));
 }
 
+/** Riwayat satu unit (satu FrameNumber) di dalam satu Job. */
+type UnitHistory = {
+  frameNumber: string;
+  /** Semua entri unit ini, urut dari yang paling awal. */
+  entries: TaskRow[];
+  /**
+   * Entri yang mewakili unit ini di achievement pemeriksaan.
+   * Aturannya: kalau unit ini pernah dinyatakan repair, yang dipakai entri
+   * repair pertamanya — sekali ketemu repair, unitnya memang perlu dikerjakan,
+   * jadi entri OK sebelumnya dianggap koreksi. Selain itu: entri pertama.
+   */
+  base: TaskRow;
+  last: TaskRow;
+};
+
+function buildHistories(all: TaskRow[]): UnitHistory[] {
+  const map = new Map<string, TaskRow[]>();
+  for (const row of all) {
+    const key = row.frameNumber || `#${row.id}`;
+    const list = map.get(key);
+    if (list) list.push(row);
+    else map.set(key, [row]);
+  }
+
+  return [...map.values()].map(entries => {
+    entries.sort(byTime);
+    const repairEntry = entries.find(row => classify(row.status) === 'repair');
+    return {
+      frameNumber: entries[0].frameNumber,
+      entries,
+      base: repairEntry ?? entries[0],
+      last: entries[entries.length - 1],
+    };
+  });
+}
+
+/** Pilah entri susulan: mana pengerjaan repair, mana koreksi, mana entri ganda. */
+function collectFollowUps(histories: UnitHistory[]): FollowUp[] {
+  const out: FollowUp[] = [];
+  for (const unit of histories) {
+    if (unit.entries.length === 1) continue;
+    const baseIndex = unit.entries.indexOf(unit.base);
+    const baseIsRepair = classify(unit.base.status) === 'repair';
+    unit.entries.forEach((row, index) => {
+      if (index === baseIndex) return;
+      const kind: FollowUpKind =
+        index < baseIndex ? 'koreksi' : baseIsRepair ? 'repair' : 'ganda';
+      out.push({ row, base: unit.base, kind });
+    });
+  }
+  return out.sort((a, b) => byTime(a.row, b.row));
+}
+
 /**
  * Achievement pengerjaan repair.
  *
- * Aturannya: satu unit yang tercatat lebih dari sekali dilihat dari entri
- * pertama dan entri terakhirnya. Kalau yang pertama repair dan yang terakhir
- * sudah OK, itu satu repair yang selesai dikerjakan — dicatat di sini, bukan
- * ditambahkan ke kolom OK pemeriksaan awal.
+ * Unit yang dihitung repair di pemeriksaan lalu entri terakhirnya OK = satu
+ * repair yang selesai dikerjakan. Dicatat di sini, bukan ditambahkan ke kolom
+ * OK pemeriksaan.
  */
-function buildRepairWork(history: Map<string, TaskRow[]>): RepairWork {
+function buildRepairWork(histories: UnitHistory[]): RepairWork {
   const fixes: RepairFix[] = [];
   const modelMap = new Map<string, RepairGroupStat>();
   const zoneMap = new Map<string, RepairGroupStat>();
   let opened = 0;
   let open = 0;
-  let reopened = 0;
 
-  for (const list of history.values()) {
-    const first = list[0];
-    const last = list[list.length - 1];
-
-    if (classify(first.status) !== 'repair') {
-      // Kebalikannya: awalnya OK/lainnya lalu jadi repair. Bukan pengerjaan
-      // repair, tapi tetap dihitung supaya bisa disebut di catatan data.
-      if (list.length > 1 && classify(last.status) === 'repair') reopened += 1;
-      continue;
-    }
+  for (const unit of histories) {
+    if (classify(unit.base.status) !== 'repair') continue;
 
     opened += 1;
-    const done = list.length > 1 && classify(last.status) === 'ok';
+    const done = unit.last !== unit.base && classify(unit.last.status) === 'ok';
     if (done) {
       const durationMs =
-        Number.isNaN(first.epochMs) || Number.isNaN(last.epochMs)
+        Number.isNaN(unit.base.epochMs) || Number.isNaN(unit.last.epochMs)
           ? Number.NaN
-          : last.epochMs - first.epochMs;
-      fixes.push({ frameNumber: first.frameNumber, opened: first, closed: last, durationMs });
+          : unit.last.epochMs - unit.base.epochMs;
+      fixes.push({
+        frameNumber: unit.frameNumber,
+        opened: unit.base,
+        closed: unit.last,
+        durationMs,
+      });
     } else {
       open += 1;
     }
 
-    bumpRepairGroup(modelMap, first.modelName, done);
-    bumpRepairGroup(zoneMap, zoneOf(first.areaProcess), done);
+    bumpRepairGroup(modelMap, unit.base.modelName, done);
+    bumpRepairGroup(zoneMap, zoneOf(unit.base.areaProcess), done);
   }
 
   fixes.sort((a, b) => byTime(a.closed, b.closed));
@@ -813,7 +878,6 @@ function buildRepairWork(history: Map<string, TaskRow[]>): RepairWork {
     done: fixes.length,
     open,
     doneRate: opened ? (fixes.length / opened) * 100 : 0,
-    reopened,
     fixes,
     byHour,
     byHourOfDay,
@@ -831,29 +895,12 @@ function buildRepairWork(history: Map<string, TaskRow[]>): RepairWork {
 }
 
 function buildBoard(job: string, all: TaskRow[], def: TaskDef | null): TaskBoard {
-  // Riwayat tiap unit (1 unit = 1 FrameNumber), urut dari entri paling awal.
-  const history = new Map<string, TaskRow[]>();
-  for (const row of all) {
-    const key = row.frameNumber || `#${row.id}`;
-    const list = history.get(key);
-    if (list) list.push(row);
-    else history.set(key, [row]);
-  }
-  for (const list of history.values()) list.sort(byTime);
-
-  // Achievement pemeriksaan: entri PERTAMA yang dipakai. Entri susulan tidak
-  // menimpanya — kalau repair lalu jadi OK, itu masuk papan pengerjaan repair.
-  const unique = [...history.values()].map(list => list[0]).sort(byTime);
-  const firstIds = new Set(unique.map(row => row.id));
-  const followUps = all.filter(row => !firstIds.has(row.id));
-
-  const repairWork = buildRepairWork(history);
-
-  // Berapa unit yang status akhirnya berbeda dari entri pertamanya.
-  let changedStatus = 0;
-  for (const list of history.values()) {
-    if (list.length > 1 && list[list.length - 1].status !== list[0].status) changedStatus += 1;
-  }
+  // 1 unit = 1 FrameNumber. Entri susulan tidak menimpa hasil pemeriksaan:
+  // kalau repair lalu jadi OK, itu masuk papan pengerjaan repair.
+  const histories = buildHistories(all);
+  const unique = histories.map(unit => unit.base).sort(byTime);
+  const followUps = collectFollowUps(histories);
+  const repairWork = buildRepairWork(histories);
 
   const counts = { ok: 0, repair: 0, other: 0 };
   for (const row of unique) counts[classify(row.status)] += 1;
@@ -938,7 +985,9 @@ function buildBoard(job: string, all: TaskRow[], def: TaskDef | null): TaskBoard
     perHour,
     quality: {
       followUps: followUps.length,
-      changedStatus,
+      repairEntries: followUps.filter(f => f.kind === 'repair').length,
+      corrections: histories.filter(unit => unit.base !== unit.entries[0]).length,
+      duplicates: followUps.filter(f => f.kind === 'ganda').length,
       brokenText: unique.filter(hasBrokenText).length,
       missingTimestamp: all.filter(row => Number.isNaN(row.epochMs)).length,
     },
