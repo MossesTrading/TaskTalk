@@ -2,6 +2,11 @@
   max-width: 1080px;
   margin: 0 auto;
   padding: 20px 24px 56px;
+
+  /* Warna khusus "repair selesai": biru, supaya beda jelas dari OK (hijau)
+     hasil pemeriksaan pertama dan dari repair (oranye) yang belum dikerjakan. */
+  --fixed: #0284c7;
+  --fixed-soft: #f0f9ff;
 }
 
 /* Kalender rentang tanggal + tombol muat ulang, di kanan judul halaman. */
@@ -152,6 +157,12 @@
 .pill.repair b {
   color: var(--warning);
 }
+.pill.fixed {
+  background: var(--fixed-soft);
+}
+.pill.fixed b {
+  color: var(--fixed);
+}
 
 .quick-rate {
   display: grid;
@@ -186,6 +197,10 @@
   vertical-align: middle;
   margin-right: 7px;
   background: var(--border);
+}
+
+.rate-bar.fixed i {
+  background: var(--fixed);
 }
 
 .task-chevron {
@@ -255,6 +270,12 @@
 }
 .tile.repair strong {
   color: var(--warning);
+}
+.tile.fixed {
+  background: var(--fixed-soft);
+}
+.tile.fixed strong {
+  color: var(--fixed);
 }
 
 .panel-section > header {
@@ -350,6 +371,9 @@
 .seg-other {
   background: var(--muted);
 }
+.seg-fixed {
+  background: var(--fixed);
+}
 
 .hour-label {
   display: grid;
@@ -392,6 +416,70 @@
 }
 .dot.other {
   background: var(--muted);
+}
+.dot.fixed {
+  background: var(--fixed);
+}
+
+/* ── Achievement pengerjaan repair ── */
+/* Dikasih kotak sendiri supaya terbaca sebagai papan terpisah, bukan lanjutan
+   dari angka pemeriksaan di atasnya. */
+.repair-block {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--fixed);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+.repair-block > header {
+  margin-bottom: 0;
+}
+
+.repair-block h3 {
+  color: var(--fixed);
+}
+
+.repair-block .tiles {
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+}
+
+.sub-block {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sub-block h4 {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.sub-block h4 small {
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.fix-table code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.fix-table .col-left {
+  text-align: left;
+}
+
+.fix-table em {
+  display: block;
+  font-style: normal;
+  font-size: 10px;
+  color: var(--muted);
 }
 
 /* ── Status ── */
