@@ -319,7 +319,7 @@ function TaskPanel({
         note={
           gabungJam
             ? `Semua ${board.dayCount} hari digabung menurut jam ${TZ_LABEL}, jadi terlihat jam berapa paling produktif.`
-            : `Tiap unit dihitung sekali, pada jam pemeriksaan pertamanya (${TZ_LABEL}).`
+            : `Tiap unit dihitung sekali, pada jam entri yang dipakai (${TZ_LABEL}).`
         }
       >
         <HourChart buckets={gabungJam ? board.byHourOfDay : board.byHour} />
@@ -328,7 +328,10 @@ function TaskPanel({
       <RepairSection board={board} periodLabel={periodLabel} />
 
       <div className="panel-split">
-        <Section title="Status" note="Satu unit satu status: entri pertama yang dipakai.">
+        <Section
+          title="Status"
+          note="Satu unit satu status: entri pertama — kecuali unitnya pernah repair, itu yang dipakai."
+        >
           <StatusBreakdown board={board} />
         </Section>
 
@@ -537,8 +540,8 @@ function RepairSection({ board, periodLabel }: { board: TaskBoard; periodLabel: 
             <Wrench size={16} /> Achievement pengerjaan repair
           </h3>
           <small className="muted">
-            Unit yang tadinya repair lalu dicatat ulang jadi OK. Hitungannya berdiri sendiri —
-            tidak dijumlahkan ke OK pemeriksaan di atas.
+            Unit repair yang dicatat ulang jadi OK. Hitungannya berdiri sendiri — tidak
+            dijumlahkan ke OK pemeriksaan di atas, dan entrinya tidak dianggap entri ganda.
           </small>
         </div>
       </header>
@@ -554,7 +557,7 @@ function RepairSection({ board, periodLabel }: { board: TaskBoard; periodLabel: 
               label="Unit repair"
               value={r.opened}
               tone="repair"
-              hint="dari pemeriksaan pertama"
+              hint="hasil pemeriksaan"
             />
             <Tile
               label="Selesai (jadi OK)"
@@ -928,12 +931,10 @@ function OperatorTable({ rows }: { rows: OperatorStat[] }) {
 // Catatan mutu data: hal-hal yang mengubah angka kalau diabaikan.
 function DataNotes({ board }: { board: TaskBoard }) {
   const q = board.quality;
-  const r = board.repairWork;
   const broken = board.unique.filter(hasBrokenText);
-  if (!q.followUps && !q.brokenText && !q.missingTimestamp) return null;
-
-  // Entri pertama tiap FrameNumber, untuk menampilkan "dari → jadi".
-  const firstOf = new Map(board.unique.map(row => [row.frameNumber, row]));
+  // Pengerjaan repair & koreksi bukan masalah data, jadi tidak memunculkan
+  // kotak ini — yang dianggap perlu dilihat hanya entri yang benar-benar ganda.
+  if (!q.duplicates && !q.brokenText && !q.missingTimestamp) return null;
 
   return (
     <section className="panel-section notes">
@@ -947,46 +948,32 @@ function DataNotes({ board }: { board: TaskBoard }) {
       </header>
 
       <ul>
-        {q.followUps ? (
+        {q.duplicates ? (
           <li>
             <Wrench size={14} />
             <div>
-              <b>{q.followUps} entri susulan.</b> Ada FrameNumber yang tercatat lebih dari sekali.
-              Achievement pemeriksaan tetap memakai entri pertama
-              {q.changedStatus ? `, dan ${q.changedStatus} unit statusnya berubah di entri berikutnya` : ''}
-              {r.done ? `; ${r.done} di antaranya repair yang selesai dan dihitung di papan pengerjaan repair` : ''}.
-              Semuanya ada di sheet <i>Entri Susulan</i> pada file Excel.
+              <b>{q.duplicates} entri ganda.</b> FrameNumber yang sama tercatat lagi tanpa
+              mengubah hasil pemeriksaannya, jadi yang dipakai entri pertama. Entri susulan
+              lain — {q.repairEntries} pengerjaan repair
+              {q.corrections ? ` dan ${q.corrections} koreksi jadi repair` : ''} — tidak ikut
+              dihitung di sini karena bukan entri berulang. Rinciannya ada di sheet{' '}
+              <i>Entri Susulan</i> pada file Excel.
               <ul className="dup-list">
-                {board.followUps.slice(0, 4).map(row => {
-                  const first = firstOf.get(row.frameNumber);
-                  return (
-                    <li key={row.id}>
-                      <code>{row.frameNumber}</code>{' '}
-                      {first ? (
-                        <>
-                          {first.status} {formatZoneTime(first.epochMs)}
-                          {' → '}
-                        </>
-                      ) : null}
-                      <b>{row.status}</b> {formatZoneTime(row.epochMs)}
+                {board.followUps
+                  .filter(follow => follow.kind === 'ganda')
+                  .slice(0, 4)
+                  .map(follow => (
+                    <li key={follow.row.id}>
+                      <code>{follow.row.frameNumber}</code> {follow.base.status}{' '}
+                      {formatZoneTime(follow.base.epochMs)}
+                      {' → '}
+                      <b>{follow.row.status}</b> {formatZoneTime(follow.row.epochMs)}
                     </li>
-                  );
-                })}
-                {board.followUps.length > 4 ? (
-                  <li className="muted">dan {board.followUps.length - 4} lainnya…</li>
+                  ))}
+                {q.duplicates > 4 ? (
+                  <li className="muted">dan {q.duplicates - 4} lainnya…</li>
                 ) : null}
               </ul>
-            </div>
-          </li>
-        ) : null}
-
-        {r.reopened ? (
-          <li>
-            <AlertTriangle size={14} />
-            <div>
-              <b>{r.reopened} unit awalnya OK lalu jadi repair.</b> Arahnya kebalikan dari
-              pengerjaan repair, jadi tidak ikut dihitung sebagai repair selesai. Unitnya tetap
-              terhitung OK di achievement pemeriksaan karena entri pertamanya OK.
             </div>
           </li>
         ) : null}
