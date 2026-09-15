@@ -67,7 +67,10 @@ export function buildTaskSheets(board: TaskBoard, periodLabel: string): XlsxShee
       [null, null],
       ['Unit unik diperiksa', t.units],
       ['Total entri tersimpan', t.records],
-      ['Entri susulan (pemeriksaan ulang)', board.quality.followUps],
+      ['Entri susulan', board.quality.followUps],
+      ['— di antaranya pengerjaan repair', board.quality.repairEntries],
+      ['— di antaranya koreksi jadi repair', board.quality.corrections],
+      ['— entri ganda', board.quality.duplicates],
       [null, null],
       ['— Pemeriksaan awal (entri pertama) —', null],
       ['OK', t.ok],
@@ -82,7 +85,7 @@ export function buildTaskSheets(board: TaskBoard, periodLabel: string): XlsxShee
       ['Selesai (%)', round(r.doneRate, 2)],
       ['Rata-rata lama perbaikan', formatDuration(r.avgMs)],
       ['Median lama perbaikan', formatDuration(r.medianMs)],
-      ['Berubah OK -> repair', r.reopened],
+      ['Unit dikoreksi jadi repair', board.quality.corrections],
       [null, null],
       ['Mulai', dateCell(board.firstMs)],
       ['Selesai', dateCell(board.lastMs)],
@@ -177,7 +180,9 @@ export function buildTaskSheets(board: TaskBoard, periodLabel: string): XlsxShee
     // seluruh daftar untuk tiap barisnya.
     const fixedIds = new Set(r.fixes.map(fix => fix.opened.id));
     const lastStatus = new Map<string, string>();
-    for (const row of board.followUps) lastStatus.set(row.frameNumber, row.status);
+    for (const follow of board.followUps) {
+      lastStatus.set(follow.row.frameNumber, follow.row.status);
+    }
 
     sheets.push(
       {
@@ -236,13 +241,18 @@ export function buildTaskSheets(board: TaskBoard, periodLabel: string): XlsxShee
   }
 
   if (board.followUps.length) {
-    const firstStatus = new Map(board.unique.map(row => [row.frameNumber, row.status]));
+    const kindLabel: Record<string, string> = {
+      repair: 'pengerjaan repair',
+      koreksi: 'koreksi jadi repair',
+      ganda: 'entri ganda',
+    };
     sheets.push({
       name: 'Entri Susulan',
-      columns: [...DATA_COLUMNS, 'Status awal dipakai'],
-      rows: board.followUps.map(row => [
-        ...rowCells(row),
-        firstStatus.get(row.frameNumber) ?? '-',
+      columns: [...DATA_COLUMNS, 'Jenis', 'Status dipakai'],
+      rows: board.followUps.map(follow => [
+        ...rowCells(follow.row),
+        kindLabel[follow.kind],
+        follow.base.status,
       ]),
     });
   }
