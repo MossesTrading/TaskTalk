@@ -389,15 +389,16 @@ export type FollowUp = {
 };
 
 /**
- * Satu unit yang selesai dikerjakan: entri repair-nya lalu disusul entri OK.
+ * Satu unit yang selesai dikerjakan: entri repair-nya lalu ditutup oleh
+ * entri OK dari akun PIC REPAIR.
  */
 export type RepairFix = {
   frameNumber: string;
   /** Entri pertama — saat unit dinyatakan repair. */
   opened: TaskRow;
-  /** Entri terakhir — saat unit dinyatakan OK. */
+  /** Entri OK pertama dari akun PIC REPAIR sesudah repair-nya. */
   closed: TaskRow;
-  /** Jarak repair → OK. NaN kalau salah satu waktunya tidak terbaca. */
+  /** Jarak repair → OK (PIC REPAIR). NaN kalau salah satu waktunya tidak terbaca. */
   durationMs: number;
 };
 
@@ -509,6 +510,16 @@ function classify(status: string) {
   if (s === OK) return 'ok' as const;
   if (s === REPAIR) return 'repair' as const;
   return 'other' as const;
+}
+
+// Akun yang berhak menyatakan repair selesai: "PIC REPAIR", "PIC REPAIR 2",
+// dst. Entri OK dari akun lain (device biasa yang re-scan, misalnya) tidak
+// dianggap menutup repair — unitnya tetap dihitung pending sampai memang ada
+// entri OK dari salah satu akun PIC REPAIR.
+const PIC_REPAIR_PREFIX = 'PIC REPAIR';
+
+function isPicRepairName(name: string) {
+  return name.trim().toUpperCase().startsWith(PIC_REPAIR_PREFIX);
 }
 
 // Math.min(...array) melempar "Maximum call stack size exceeded" begitu
@@ -789,9 +800,13 @@ function collectFollowUps(histories: UnitHistory[]): FollowUp[] {
 /**
  * Achievement pengerjaan repair.
  *
- * Unit yang dihitung repair di pemeriksaan lalu entri terakhirnya OK = satu
- * repair yang selesai dikerjakan. Dicatat di sini, bukan ditambahkan ke kolom
- * OK pemeriksaan.
+ * Unit yang dihitung repair di pemeriksaan baru dianggap selesai kalau ada
+ * entri OK yang dibuat oleh salah satu akun PIC REPAIR — berapa pun entri
+ * lain yang muncul di antaranya (re-scan device biasa, dsb, tidak dihitung
+ * menutup repair). Selama entri OK dari PIC REPAIR itu belum ada, unitnya
+ * tetap masuk hitungan "belum selesai", walau entri paling terakhirnya
+ * kebetulan sudah OK. Dicatat di sini, bukan ditambahkan ke kolom OK
+ * pemeriksaan.
  */
 function buildRepairWork(histories: UnitHistory[]): RepairWork {
   const fixes: RepairFix[] = [];
@@ -804,16 +819,23 @@ function buildRepairWork(histories: UnitHistory[]): RepairWork {
     if (classify(unit.base.status) !== 'repair') continue;
 
     opened += 1;
-    const done = unit.last !== unit.base && classify(unit.last.status) === 'ok';
+    const baseIndex = unit.entries.indexOf(unit.base);
+    // Entri OK pertama sesudah repair-nya yang dibuat oleh akun PIC REPAIR —
+    // itu yang dianggap benar-benar menutup repairnya.
+    const closedByPicRepair = unit.entries
+      .slice(baseIndex + 1)
+      .find(row => classify(row.status) === 'ok' && isPicRepairName(row.createdByName));
+    const done = Boolean(closedByPicRepair);
     if (done) {
+      const closed = closedByPicRepair!;
       const durationMs =
-        Number.isNaN(unit.base.epochMs) || Number.isNaN(unit.last.epochMs)
+        Number.isNaN(unit.base.epochMs) || Number.isNaN(closed.epochMs)
           ? Number.NaN
-          : unit.last.epochMs - unit.base.epochMs;
+          : closed.epochMs - unit.base.epochMs;
       fixes.push({
         frameNumber: unit.frameNumber,
         opened: unit.base,
-        closed: unit.last,
+        closed,
         durationMs,
       });
     } else {
