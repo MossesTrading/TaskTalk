@@ -4,7 +4,6 @@ import {
   formatZoneDate,
   TZ_HOURS,
   TZ_LABEL,
-  type PullStats,
   type TaskBoard,
   type TaskRow,
 } from './tasks';
