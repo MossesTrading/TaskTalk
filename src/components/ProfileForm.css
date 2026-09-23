@@ -1,0 +1,19 @@
+.profile-form .photo-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 22px;
+}
+
+.profile-form .photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-form .hint {
+  width: 100%;
+  margin: 0;
+  font-size: 12px;
+}

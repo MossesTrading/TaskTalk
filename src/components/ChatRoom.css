@@ -1,0 +1,227 @@
+.chat-room {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.room-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px 14px 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.head-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.head-text small.online {
+  color: var(--success);
+  font-weight: 600;
+}
+
+/* Daftar dibalik supaya otomatis menempel di pesan terbaru. */
+.messages {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column-reverse;
+  overflow-y: auto;
+  padding: 16px 22px;
+  gap: 2px;
+}
+
+.messages .day {
+  align-self: center;
+  margin: 12px auto;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  width: fit-content;
+}
+
+.messages .system {
+  margin: 6px auto;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+  width: fit-content;
+}
+
+.messages .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.messages .row.mine {
+  flex-direction: row-reverse;
+}
+
+.messages .row .delete {
+  opacity: 0;
+  width: 32px;
+  height: 32px;
+}
+
+.messages .row:hover .delete {
+  opacity: 1;
+}
+
+.bubble {
+  max-width: min(560px, 70%);
+  padding: 8px 12px;
+  border-radius: 16px 16px 16px 4px;
+  background: var(--bubble-in);
+}
+
+.bubble.mine {
+  border-radius: 16px 16px 4px 16px;
+  background: var(--primary);
+  color: #fff;
+}
+
+.bubble .sender {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+.bubble .text {
+  margin: 4px 0 0;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bubble .deleted {
+  margin: 0;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.bubble .meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.bubble .tick.read {
+  color: var(--read-receipt);
+  opacity: 1;
+}
+
+.bubble .tick.pending {
+  opacity: 0.6;
+}
+
+.messages .older {
+  display: grid;
+  place-items: center;
+  padding: 10px 0 16px;
+}
+
+.composer-bar {
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.composer-bar .input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-bar .send {
+  background: var(--primary);
+  color: #fff;
+}
+
+.composer-bar .send:hover:not(:disabled) {
+  background: var(--primary-pressed);
+  color: #fff;
+}
+
+.composer-bar .photo-chip {
+  position: relative;
+  display: inline-block;
+  margin-bottom: 8px;
+}
+
+.composer-bar .photo-chip img {
+  max-width: 140px;
+  max-height: 110px;
+  border-radius: var(--radius-md);
+  display: block;
+}
+
+.composer-bar .photo-chip .btn.icon {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 26px;
+  height: 26px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+
+.removed-note {
+  padding: 16px 22px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* Tombol kembali ke daftar chat: hanya perlu di HP (di laptop daftarnya selalu terlihat). */
+.back-to-list {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .back-to-list {
+    display: grid;
+    place-items: center;
+    margin-left: -6px;
+  }
+
+  .room-head {
+    gap: 8px;
+    padding: 10px 6px 10px 8px;
+  }
+
+  .messages {
+    padding: 12px;
+  }
+
+  .bubble {
+    max-width: 84%;
+  }
+
+  /* Di HP tidak ada hover, jadi tombol hapus pesan langsung terlihat. */
+  .messages .row .delete {
+    opacity: 1;
+  }
+
+  .composer-bar {
+    padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
+  }
+}

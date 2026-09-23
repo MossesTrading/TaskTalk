@@ -1,0 +1,98 @@
+.bell-wrap {
+  position: relative;
+}
+
+.bell-dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 2px solid var(--bg);
+}
+
+.bell-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 45;
+  width: 360px;
+  max-height: 70vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow-pop);
+}
+
+.bell-panel header {
+  display: grid;
+  gap: 2px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bell-panel ul {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+
+.bell-panel li button {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+  color: inherit;
+}
+
+.bell-panel li button:hover {
+  background: var(--surface);
+}
+
+.bell-panel li button.unread {
+  background: var(--primary-soft);
+}
+
+.bell-panel .text {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.bell-panel .quote {
+  color: var(--text-secondary);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bell-panel .type-icon {
+  color: var(--primary);
+  flex: none;
+  margin-top: 4px;
+}
+
+.bell-panel .empty-note {
+  padding: 22px 16px;
+  text-align: center;
+}
+
+@media (max-width: 860px) {
+  /* Panel notifikasi tidak boleh lebih lebar dari layar HP. */
+  .bell-panel {
+    right: -6px;
+    width: min(360px, calc(100vw - 20px));
+    max-height: 60dvh;
+  }
+}
